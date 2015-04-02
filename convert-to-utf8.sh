@@ -47,7 +47,7 @@ function reset_gerrit_config() {
 }
 
 function backup_gerrit_db() {
-    
+
     echo "Backing up db ${DB_NAME}"
     mysqldump -h ${DB_HOST} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} --skip-opt 
 --add-drop-table \
@@ -58,12 +58,12 @@ ${DB_NAME}-backup.sql
 }
 
 function convert_gerrit_db() {
-    
+
     echo "Converting db sql backup ${DB_NAME}-backup.sql to utf8 in 
 ${DB_NAME}-utf8.sql"
     cat ${DB_NAME}-backup.sql | sed -e 's:latin1:utf8:g' -e 's:MyISAM:InnoDB:g' > 
 ${DB_NAME}-utf8.sql
-    
+
 }
 
 function restore_db() {
@@ -71,31 +71,47 @@ function restore_db() {
     echo "Restoring previous backup of DB"
     mysql -h ${DB_HOST} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} 
 --default-character-set=utf8 \
-	${DB_NAME} -e "ALTER DATABASE ${DB_NAME} CHARACTER SET latin1 COLLATE 
+	  ${DB_NAME} -e "ALTER DATABASE ${DB_NAME} CHARACTER SET latin1 COLLATE 
 latin1_swedish_ci;"
 
     mysql -h ${DB_HOST} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} ${DB_NAME} < 
-${DB_NAME}-backup.sql 
+${DB_NAME}-backup.sql
 }
 
 function load_converted_db() {
 
-
     echo "Loading convert DB sql"
+
+    echo "Converting Gerrit DB character set to utf8"
     mysql -h ${DB_HOST} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} 
 --default-character-set=utf8 \
-	${DB_NAME} -e "ALTER DATABASE ${DB_NAME} CHARACTER SET utf8 COLLATE 
-utf8_general_ci;" ||
-	{ echo "Problem converting the database character set"; exit 1; }
+    ${DB_NAME} -e "ALTER DATABASE ${DB_NAME} CHARACTER SET utf8 COLLATE 
+utf8_bin;" ||
+	    { echo "Problem converting the database character set"; exit 1; }
+
+    echo "Converting collation on all Gerrit DB tables"
+    dbquery=$( mysql -h ${DB_HOST} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} 
+${DB_NAME} -N -B -e "show tables" )
+    dbtables=( $( for i in $dbquery ; do echo $i ; done ) )
+
+    for i in "${dbtables[@]}"; do
+        echo "converting table: $i"
+        mysql -h ${DB_HOST} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} 
+--default-character-set=utf8 \
+        ${DB_NAME} -e "ALTER TABLE $i CONVERT TO CHARACTER SET utf8 COLLATE 
+utf8_bin" ||
+	    { echo "Problem converting the table's collation"; exit 1; }
+    done
 
     # this caught me by surpise, but generally the console redirection results in 
 the
     # characters being read in with latin1 encoding. May be dependent on system 
 locale
     # settings.
+    echo "Importing data from ${DB_NAME}-utf8.sql"
     mysql -h ${DB_HOST} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} 
 --default-character-set=latin1 \
-	${DB_NAME} < ${DB_NAME}-utf8.sql
+    ${DB_NAME} < ${DB_NAME}-utf8.sql
 }
 
 function convert() {
@@ -103,20 +119,20 @@ function convert() {
     convert_gerrit_db
 
     trap cleanup "EXIT" "SIGTRAP" "SIGKILL" "SIGTERM"
-    update_gerrit_config
+#    update_gerrit_config
     load_converted_db
     trap - "EXIT" "SIGTRAP" "SIGKILL" "SIGTERM"
 }
 
 function revert() {
-    reset_gerrit_config
+#    reset_gerrit_config
     restore_db
 }
 
 USAGE="$0 ACTION [path]
 
   ACTION   convert, revert or backup
-  path     path to gerrit directory
+  path     path to gerrit site directory
 "
 
 if [ $# -ne 2 ]
