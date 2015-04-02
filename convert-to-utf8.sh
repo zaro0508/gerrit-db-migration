@@ -22,11 +22,14 @@ function get_config_data() {
     DB_HOST=$(git config --file ${config} --get database.hostname)
     DB_NAME=$(git config --file ${config} --get database.database)
     DB_USER=$(git config --file ${config} --get database.username)
+    if [ -z "${DB_PORT}" ] ; then
+       DB_PORT = "3306"
+    fi
     DB_PASSWD=$(git config --file ${secure} --get database.password)
 }
 
 function update_gerrit_config() {
-    if [[ -z "${DB_HOST}" ]] || [[ -z "${DB_NAME}" ]]
+    if [[ -z "${DB_HOST} ]] || [[ -z "${DB_PORT}" ]] || [[ -z "${DB_NAME}" ]]
     then
 	echo "Cannot build recognizable url, exiting"
 	exit 2
@@ -34,7 +37,7 @@ function update_gerrit_config() {
 
     echo "Setting database.url"
     git config --file ${CONFIG} database.url 
-jdbc:mysql://${DB_HOST}/${DB_NAME}?useUnicode=yes\&characterEncoding=UTF-8\&sessionVariables=storage_engine=InnoDB 
+jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}?useUnicode=yes\&characterEncoding=UTF-8\&sessionVariables=storage_engine=InnoDB 
 ||
 	{ echo "Problem setting the database url configuration setting"; exit 1; 
 }
@@ -49,7 +52,7 @@ function reset_gerrit_config() {
 function backup_gerrit_db() {
 
     echo "Backing up db ${DB_NAME}"
-    mysqldump -h ${DB_HOST} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} --skip-opt 
+    mysqldump -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} --skip-opt 
 --add-drop-table \
             --add-locks --create-options --disable-keys --lock-tables --quick 
 --quote-names \
@@ -69,12 +72,12 @@ ${DB_NAME}-utf8.sql
 function restore_db() {
 
     echo "Restoring previous backup of DB"
-    mysql -h ${DB_HOST} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} 
+    mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} 
 --default-character-set=utf8 \
 	  ${DB_NAME} -e "ALTER DATABASE ${DB_NAME} CHARACTER SET latin1 COLLATE 
 latin1_swedish_ci;"
 
-    mysql -h ${DB_HOST} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} ${DB_NAME} < 
+    mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} ${DB_NAME} < 
 ${DB_NAME}-backup.sql
 }
 
@@ -83,20 +86,20 @@ function load_converted_db() {
     echo "Loading convert DB sql"
 
     echo "Converting Gerrit DB character set to utf8"
-    mysql -h ${DB_HOST} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} 
+    mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} 
 --default-character-set=utf8 \
     ${DB_NAME} -e "ALTER DATABASE ${DB_NAME} CHARACTER SET utf8 COLLATE 
 utf8_bin;" ||
 	    { echo "Problem converting the database character set"; exit 1; }
 
     echo "Converting collation on all Gerrit DB tables"
-    dbquery=$( mysql -h ${DB_HOST} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} 
+    dbquery=$( mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} 
 ${DB_NAME} -N -B -e "show tables" )
     dbtables=( $( for i in $dbquery ; do echo $i ; done ) )
 
     for i in "${dbtables[@]}"; do
         echo "converting table: $i"
-        mysql -h ${DB_HOST} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} 
+        mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} 
 --default-character-set=utf8 \
         ${DB_NAME} -e "ALTER TABLE $i CONVERT TO CHARACTER SET utf8 COLLATE 
 utf8_bin" ||
@@ -109,7 +112,7 @@ the
 locale
     # settings.
     echo "Importing data from ${DB_NAME}-utf8.sql"
-    mysql -h ${DB_HOST} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} 
+    mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} 
 --default-character-set=latin1 \
     ${DB_NAME} < ${DB_NAME}-utf8.sql
 }
