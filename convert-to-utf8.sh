@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# The original source of this script is from 
+# The original source of this script is from
 # https://bugs.launchpad.net/openstack-ci/+bug/979227
 # Authored by Drragh Bailey (dbailey)-k
 
@@ -20,28 +20,26 @@ function get_config_data() {
 
     CONFIG=${config}
     DB_HOST=$(git config --file ${config} --get database.hostname)
+    DB_PORT=$(git config --file ${config} --get database.port)
+    if [ -z "${DB_PORT}" ] ; then
+       DB_PORT="3306"
+    fi
     DB_NAME=$(git config --file ${config} --get database.database)
     DB_USER=$(git config --file ${config} --get database.username)
-    if [ -z "${DB_PORT}" ] ; then
-       DB_PORT = "3306"
-    fi
     DB_PASSWD=$(git config --file ${secure} --get database.password)
 }
 
 function update_gerrit_config() {
-    if [[ -z "${DB_HOST} ]] || [[ -z "${DB_PORT}" ]] || [[ -z "${DB_NAME}" ]]
+    if [[ -z "${DB_HOST}" ]] || [[ -z "${DB_PORT}" ]] || [[ -z "${DB_NAME}" ]]
     then
 	echo "Cannot build recognizable url, exiting"
 	exit 2
     fi
 
     echo "Setting database.url"
-    git config --file ${CONFIG} database.url 
-jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}?useUnicode=yes\&characterEncoding=UTF-8\&sessionVariables=storage_engine=InnoDB 
-||
-	{ echo "Problem setting the database url configuration setting"; exit 1; 
-}
-
+    git config --file ${CONFIG} database.url \
+      jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}?useUnicode=yes\&characterEncoding=UTF-8\&sessionVariables=storage_engine=InnoDB ||
+	{ echo "Problem setting the database url configuration setting"; exit 1; }
 }
 
 function reset_gerrit_config() {
@@ -52,69 +50,51 @@ function reset_gerrit_config() {
 function backup_gerrit_db() {
 
     echo "Backing up db ${DB_NAME}"
-    mysqldump -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} --skip-opt 
---add-drop-table \
-            --add-locks --create-options --disable-keys --lock-tables --quick 
---quote-names \
-            --skip-set-charset --default-character-set=latin1 ${DB_NAME} > 
-${DB_NAME}-backup.sql
+    mysqldump -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} \
+      --skip-opt --single-transaction --skip-comments --skip-compact \
+      --default-character-set=latin1 ${DB_NAME} > ${DB_NAME}-backup.sql
 }
 
 function convert_gerrit_db() {
 
-    echo "Converting db sql backup ${DB_NAME}-backup.sql to utf8 in 
-${DB_NAME}-utf8.sql"
-    cat ${DB_NAME}-backup.sql | sed -e 's:latin1:utf8:g' -e 's:MyISAM:InnoDB:g' > 
-${DB_NAME}-utf8.sql
+    echo "Converting data in sql backup (${DB_NAME}-backup.sql) to utf8 (${DB_NAME}-utf8.sql)"
+    cat ${DB_NAME}-backup.sql | sed -e 's:latin1_general_cs:utf8_bin:g' -e 's:latin1_bin:utf8_bin:g' -e 's:latin1:utf8:g' > ${DB_NAME}-utf8.sql
 
+    echo "Converting Gerrit DB character set to utf8"
+    mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} --default-character-set=utf8 \
+        ${DB_NAME} -e "ALTER DATABASE ${DB_NAME} CHARACTER SET utf8 COLLATE utf8_bin;" ||
+	{ echo "Problem converting the database character set"; exit 1; }
+
+    echo "Converting collation on all Gerrit DB tables to utf8_bin"
+    dbquery=$( mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} ${DB_NAME} -N -B -e "show tables" )
+    dbtables=( $( for i in $dbquery ; do echo $i ; done ) )
+
+    for i in "${dbtables[@]}"; do
+        echo "converting table: $i"
+        mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} --default-character-set=utf8 \
+            ${DB_NAME} -e "ALTER TABLE $i CONVERT TO CHARACTER SET utf8 COLLATE utf8_bin" ||
+	    { echo "Problem converting the table's collation"; exit 1; }
+    done
 }
 
 function restore_db() {
 
     echo "Restoring previous backup of DB"
-    mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} 
---default-character-set=utf8 \
-	  ${DB_NAME} -e "ALTER DATABASE ${DB_NAME} CHARACTER SET latin1 COLLATE 
-latin1_swedish_ci;"
+    mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} --default-character-set=utf8 \
+	  ${DB_NAME} -e "ALTER DATABASE ${DB_NAME} CHARACTER SET latin1 COLLATE latin1_swedish_ci;"
 
-    mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} ${DB_NAME} < 
-${DB_NAME}-backup.sql
+    mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} ${DB_NAME} < ${DB_NAME}-backup.sql
 }
 
 function load_converted_db() {
 
-    echo "Loading convert DB sql"
+    echo "Drop ${DB_NAME} and re-create with utf8 character set"
+    mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} --default-character-set=utf8 \
+        -e "drop database ${DB_NAME}; create database ${DB_NAME} CHARACTER SET utf8 COLLATE utf8_bin;"
 
-    echo "Converting Gerrit DB character set to utf8"
-    mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} 
---default-character-set=utf8 \
-    ${DB_NAME} -e "ALTER DATABASE ${DB_NAME} CHARACTER SET utf8 COLLATE 
-utf8_bin;" ||
-	    { echo "Problem converting the database character set"; exit 1; }
-
-    echo "Converting collation on all Gerrit DB tables"
-    dbquery=$( mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} 
-${DB_NAME} -N -B -e "show tables" )
-    dbtables=( $( for i in $dbquery ; do echo $i ; done ) )
-
-    for i in "${dbtables[@]}"; do
-        echo "converting table: $i"
-        mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} 
---default-character-set=utf8 \
-        ${DB_NAME} -e "ALTER TABLE $i CONVERT TO CHARACTER SET utf8 COLLATE 
-utf8_bin" ||
-	    { echo "Problem converting the table's collation"; exit 1; }
-    done
-
-    # this caught me by surpise, but generally the console redirection results in 
-the
-    # characters being read in with latin1 encoding. May be dependent on system 
-locale
-    # settings.
-    echo "Importing data from ${DB_NAME}-utf8.sql"
-    mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} 
---default-character-set=latin1 \
-    ${DB_NAME} < ${DB_NAME}-utf8.sql
+    echo "Importing data from ${DB_NAME}-utf8.sql into ${DB_NAME}"
+    mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} --default-character-set=utf8 \
+        ${DB_NAME} < ${DB_NAME}-utf8.sql
 }
 
 function convert() {
