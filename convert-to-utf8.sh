@@ -8,7 +8,7 @@ function cleanup() {
     revert
 }
 
-
+# Get DB config from existing gerrit site
 function get_config_data() {
     local config_path=$1
     local config="$1/etc/gerrit.config"
@@ -29,6 +29,7 @@ function get_config_data() {
     DB_PASSWD=$(git config --file ${secure} --get database.password)
 }
 
+# Update Gerrit config to connect to DB with utf8 char encoding
 function update_gerrit_config() {
     if [[ -z "${DB_HOST}" ]] || [[ -z "${DB_PORT}" ]] || [[ -z "${DB_NAME}" ]]
     then
