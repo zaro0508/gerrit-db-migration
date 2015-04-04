@@ -56,24 +56,10 @@ function backup_gerrit_db() {
 
 function convert_gerrit_db() {
 
-    echo "Converting data in sql backup (${DB_NAME}-backup.sql) to utf8 (${DB_NAME}-utf8.sql)"
-    cat ${DB_NAME}-backup.sql | sed -e 's:latin1_general_cs:utf8_bin:g' -e 's:latin1_bin:utf8_bin:g' -e 's:latin1:utf8:g' > ${DB_NAME}-utf8.sql
-
     echo "Converting Gerrit DB character set to utf8"
     mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} --default-character-set=utf8 \
         ${DB_NAME} -e "ALTER DATABASE ${DB_NAME} CHARACTER SET utf8 COLLATE utf8_bin;" ||
 	{ echo "Problem converting the database character set"; exit 1; }
-
-    echo "Converting collation on all Gerrit DB tables to utf8_bin"
-    dbquery=$( mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} ${DB_NAME} -N -B -e "show tables" )
-    dbtables=( $( for i in $dbquery ; do echo $i ; done ) )
-
-    for i in "${dbtables[@]}"; do
-        echo "converting table: $i"
-        mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} --default-character-set=utf8 \
-            ${DB_NAME} -e "ALTER TABLE $i CONVERT TO CHARACTER SET utf8 COLLATE utf8_bin" ||
-	    { echo "Problem converting the table's collation"; exit 1; }
-    done
 
 }
 
@@ -88,9 +74,23 @@ function restore_db() {
 
 function load_converted_db() {
 
+    echo "Converting data in sql backup (${DB_NAME}-backup.sql) to utf8 (${DB_NAME}-utf8.sql)"
+    cat ${DB_NAME}-backup.sql | sed -e 's:latin1_swedish_ci:utf8_bin:g' -e 's:latin1_general_cs:utf8_bin:g' -e 's:latin1_bin:utf8_bin:g' -e 's:latin1:utf8:g' > ${DB_NAME}-utf8.sql
+
     echo "Importing data from ${DB_NAME}-utf8.sql into ${DB_NAME}"
     mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} --default-character-set=utf8 \
         ${DB_NAME} < ${DB_NAME}-utf8.sql
+
+    echo "Converting collation on all Gerrit DB tables to utf8_bin"
+    dbquery=$( mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} ${DB_NAME} -N -B -e "show tables" )
+    dbtables=( $( for i in $dbquery ; do echo $i ; done ) )
+
+    for i in "${dbtables[@]}"; do
+        echo "converting table: $i"
+        mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} --default-character-set=utf8 \
+            ${DB_NAME} -e "ALTER TABLE $i CONVERT TO CHARACTER SET utf8 COLLATE utf8_bin" ||
+	    { echo "Problem converting the table's collation"; exit 1; }
+    done
 }
 
 function convert() {
