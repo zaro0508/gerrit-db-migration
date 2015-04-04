@@ -51,9 +51,7 @@ function reset_gerrit_config() {
 function backup_gerrit_db() {
 
     echo "Backing up db ${DB_NAME} to ${DB_NAME}-backup.sql"
-    mysqldump -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} \
-      --skip-opt --single-transaction --skip-comments --skip-compact \
-      --default-character-set=latin1 ${DB_NAME} > ${DB_NAME}-backup.sql
+    mysqldump -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} ${DB_NAME} > ${DB_NAME}-backup.sql
 }
 
 function convert_gerrit_db() {
@@ -65,6 +63,18 @@ function convert_gerrit_db() {
     mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} --default-character-set=utf8 \
         ${DB_NAME} -e "ALTER DATABASE ${DB_NAME} CHARACTER SET utf8 COLLATE utf8_bin;" ||
 	{ echo "Problem converting the database character set"; exit 1; }
+
+    echo "Converting collation on all Gerrit DB tables to utf8_bin"
+    dbquery=$( mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} ${DB_NAME} -N -B -e "show tables" )
+    dbtables=( $( for i in $dbquery ; do echo $i ; done ) )
+
+    for i in "${dbtables[@]}"; do
+        echo "converting table: $i"
+        mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} --default-character-set=utf8 \
+            ${DB_NAME} -e "ALTER TABLE $i CONVERT TO CHARACTER SET utf8 COLLATE utf8_bin" ||
+	    { echo "Problem converting the table's collation"; exit 1; }
+    done
+
 }
 
 function restore_db() {
@@ -77,10 +87,6 @@ function restore_db() {
 }
 
 function load_converted_db() {
-
-    echo "Drop ${DB_NAME} and re-create with utf8 character set"
-    mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} --default-character-set=utf8 \
-        -e "drop database ${DB_NAME}; create database ${DB_NAME} CHARACTER SET utf8 COLLATE utf8_bin;"
 
     echo "Importing data from ${DB_NAME}-utf8.sql into ${DB_NAME}"
     mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} --default-character-set=utf8 \
