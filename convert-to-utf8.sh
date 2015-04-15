@@ -54,15 +54,6 @@ function backup_gerrit_db() {
     mysqldump -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} ${DB_NAME} > ${DB_NAME}-backup.sql
 }
 
-function convert_gerrit_db() {
-
-    echo "Converting Gerrit DB character set to utf8"
-    mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} --default-character-set=utf8 \
-        ${DB_NAME} -e "ALTER DATABASE ${DB_NAME} CHARACTER SET utf8 COLLATE utf8_bin;" ||
-	{ echo "Problem converting the database character set"; exit 1; }
-
-}
-
 function restore_db() {
 
     echo "Restoring previous backup of DB with ${DB_NAME}-backup.sql"
@@ -72,7 +63,12 @@ function restore_db() {
     mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} ${DB_NAME} < ${DB_NAME}-backup.sql
 }
 
-function load_converted_db() {
+function convert_gerrit_db() {
+
+    echo "Converting Gerrit DB character set to utf8"
+    mysql -h ${DB_HOST} -P ${DB_PORT} -u ${DB_USER} ${DB_PASSWD:+-p${DB_PASSWD}} --default-character-set=utf8 \
+        ${DB_NAME} -e "ALTER DATABASE ${DB_NAME} CHARACTER SET utf8 COLLATE utf8_bin;" ||
+	{ echo "Problem converting the database character set"; exit 1; }
 
     echo "Converting data in sql backup (${DB_NAME}-backup.sql) to utf8 (${DB_NAME}-utf8.sql)"
     cat ${DB_NAME}-backup.sql | sed -e 's:latin1_swedish_ci:utf8_bin:g' -e 's:latin1_general_cs:utf8_bin:g' -e 's:latin1_bin:utf8_bin:g' -e 's:latin1:utf8:g' > ${DB_NAME}-utf8.sql
@@ -95,11 +91,10 @@ function load_converted_db() {
 
 function convert() {
     backup_gerrit_db
-    convert_gerrit_db
 
     trap cleanup "EXIT" "SIGTRAP" "SIGKILL" "SIGTERM"
 #    update_gerrit_config
-    load_converted_db
+    convert_gerrit_db
     trap - "EXIT" "SIGTRAP" "SIGKILL" "SIGTERM"
 }
 
